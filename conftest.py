@@ -1,21 +1,21 @@
 import pytest
+import time
 
-from api import (
-    create_courier,
-    create_order,
-    delete_courier,
-    get_order_by_track,
-    login_courier
-)
+from api import ScooterApi
 from data import ORDER_DATA
 from helpers import generate_courier_payload
 
 
 @pytest.fixture
-def courier():
+def api():
+    return ScooterApi()
+
+
+@pytest.fixture
+def courier(api):
     payload = generate_courier_payload()
 
-    create_response = create_courier(payload)
+    create_response = api.create_courier(payload)
 
     if create_response.status_code != 201:
         raise RuntimeError(
@@ -23,7 +23,7 @@ def courier():
             f"{create_response.status_code}, {create_response.text}"
         )
 
-    login_response = login_courier(
+    login_response = api.login_courier(
         payload["login"],
         payload["password"]
     )
@@ -36,19 +36,20 @@ def courier():
 
     courier_id = login_response.json()["id"]
 
-    yield {
-        "login": payload["login"],
-        "password": payload["password"],
-        "firstName": payload["firstName"],
-        "id": courier_id
-    }
-
-    delete_courier(courier_id)
+    try:
+        yield {
+            "login": payload["login"],
+            "password": payload["password"],
+            "firstName": payload["firstName"],
+            "id": courier_id
+        }
+    finally:
+        api.delete_courier(courier_id)
 
 
 @pytest.fixture
-def order():
-    response = create_order(ORDER_DATA)
+def order(api):
+    response = api.create_order(ORDER_DATA)
 
     if response.status_code != 201:
         raise RuntimeError(
@@ -58,15 +59,19 @@ def order():
 
     track = response.json()["track"]
 
-    order_response = get_order_by_track(track)
+    for _ in range(5):
+        order_response = api.get_order_by_track(track)
 
-    if order_response.status_code != 200:
-        raise RuntimeError(
-            f"Не удалось получить созданный заказ: "
-            f"{order_response.status_code}, {order_response.text}"
-        )
+        if order_response.status_code == 200:
+            yield {
+                "track": track,
+                "id": order_response.json()["order"]["id"]
+            }
+            return
 
-    yield {
-        "track": track,
-        "id": order_response.json()["order"]["id"]
-    }
+        time.sleep(1)
+
+    raise RuntimeError(
+        f"Не удалось получить созданный заказ: "
+        f"{order_response.status_code}, {order_response.text}"
+    )
